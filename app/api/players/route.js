@@ -1,23 +1,36 @@
 /**
  * GET /api/players
  * Fetch all registered players with pagination, advanced search, and filtering
- * Returns full player data matching the updated Player model
+ * Returns full player data matching the updated Player model (Admin only)
  */
 import connectDB from "../../../lib/mongodb";
 import Player from "../../../models/Player";
-import { successResponse, errorResponse, calculateAge } from "../../../utils/apiHelpers";
+import { successResponse, errorResponse } from "../../../utils/apiHelpers";
+import { requireAdmin } from "../../../lib/auth/adminSession";
+import { ADMIN_PLAYER_FIELDS, toAdminPlayer } from "../../../lib/playerProjection";
+
+const MAX_LIMIT = 10000; // the admin Excel export requests all players in one call
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request) {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.response) return auth.response;
+
     await connectDB();
 
     const { searchParams } = new URL(request.url);
 
     // Pagination
-    const page = parseInt(searchParams.get("page") || "1", 10);
-    const limit = parseInt(searchParams.get("limit") || "20", 10);
+    const pageRaw = parseInt(searchParams.get("page") || "1", 10);
+    const limitRaw = parseInt(searchParams.get("limit") || "20", 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, MAX_LIMIT) : 20;
     const skip = (page - 1) * limit;
 
     // Filters
@@ -46,16 +59,19 @@ export async function GET(request) {
     }
 
     if (search && search.trim()) {
-      const trimmedSearch = search.trim();
+      const trimmedSearch = search.trim().slice(0, 100);
+      const safePattern = escapeRegex(trimmedSearch);
       const orConditions = [
-        { playerName: { $regex: trimmedSearch, $options: "i" } },
-        { playerPhone: { $regex: trimmedSearch, $options: "i" } },
-        { transactionId: { $regex: trimmedSearch, $options: "i" } },
+        { playerName: { $regex: safePattern, $options: "i" } },
+        { playerPhone: { $regex: safePattern, $options: "i" } },
+        { transactionId: { $regex: safePattern, $options: "i" } },
+        { "payment.razorpayPaymentId": { $regex: safePattern, $options: "i" } },
+        { "payment.razorpayOrderId": { $regex: safePattern, $options: "i" } },
       ];
 
       // If search is numeric, also search playerID and tShirtNumber
       const numericVal = Number(trimmedSearch);
-      if (!isNaN(numericVal)) {
+      if (trimmedSearch !== "" && !isNaN(numericVal)) {
         orConditions.push({ playerID: numericVal });
         orConditions.push({ tShirtNumber: numericVal });
       }
@@ -83,15 +99,9 @@ export async function GET(request) {
     // Execute query with pagination
     const [playersRaw, total] = await Promise.all([
       Player.find(query)
-        .select(
-          "playerID playerName playerPhone dateOfBirth bloodGroup " +
-            "fatherName profession professionOther previousTeam playerAddress " +
-            "previousPoints previousPerformance " +
-            "playerPhoto.url playingStyle playerType playerPool playerCategory " +
-            "tShirtSize pantSize tShirtNumber tShirtName " +
-            "paymentScreenshot.url transactionId status Age createdAt updatedAt",
-        )
-        .sort({ [safeSortField]: sortOrder })
+        .select(ADMIN_PLAYER_FIELDS)
+        // _id tie-breaker keeps pagination stable when many records share a sort value
+        .sort({ [safeSortField]: sortOrder, _id: sortOrder })
         .skip(skip)
         .limit(limit)
         .lean(),
@@ -99,10 +109,7 @@ export async function GET(request) {
     ]);
 
     // Attach calculated age dynamically while preserving historical Age fallback
-    const players = playersRaw.map((p) => ({
-      ...p,
-      calculatedAge: calculateAge(p.dateOfBirth, p.Age),
-    }));
+    const players = playersRaw.map(toAdminPlayer);
 
     return successResponse({
       players,

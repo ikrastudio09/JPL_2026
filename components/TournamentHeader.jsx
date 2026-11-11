@@ -1,7 +1,7 @@
 /**
  * Tournament Header — Server Component
  */
-export default function TournamentHeader() {
+export default function TournamentHeader({ registrationFee = 1500 }) {
   return (
     <header className="relative px-4 pt-10 pb-8 overflow-hidden">
       {/* Top Divider */}
@@ -113,7 +113,7 @@ export default function TournamentHeader() {
           {/* Stats */}
           <div className="flex items-center justify-center lg:justify-start gap-10 mt-8">
             {[
-              { value: "₹1500", label: "Entry Fee" },
+              { value: `₹${registrationFee}`, label: "Entry Fee" },
             ].map((stat) => (
               <div
                 key={stat.label}

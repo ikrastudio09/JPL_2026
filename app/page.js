@@ -5,6 +5,11 @@
  */
 import TournamentHeader from "../components/TournamentHeader";
 import RegistrationForm from '../components/RegistrationForm';
+import { getRegistrationFeeInr } from '../lib/env';
+
+// Fee comes from server configuration (REGISTRATION_FEE) — the same value the
+// payment API charges, so the displayed and charged amounts can never diverge.
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Player Registration | Maheshwari Premier League 2026',
@@ -12,6 +17,7 @@ export const metadata = {
 };
 
 export default function RegisterPage() {
+  const registrationFee = getRegistrationFeeInr();
   return (
     <main className="min-h-screen">
       {/* Background decorative elements */}
@@ -37,10 +43,10 @@ export default function RegisterPage() {
       {/* Page content */}
       <div className="relative z-10 max-w-2xl mx-auto px-4 sm:px-6 pb-16">
         {/* Tournament Header */}
-        <TournamentHeader />
+        <TournamentHeader registrationFee={registrationFee} />
 
         {/* Registration Form */}
-        <RegistrationForm />
+        <RegistrationForm registrationFee={registrationFee} />
 
         {/* Footer */}
         <footer className="mt-10 text-center">

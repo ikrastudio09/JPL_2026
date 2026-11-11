@@ -6,6 +6,7 @@
  * Usage: /api/proxy-image?url=https://res.cloudinary.com/...
  */
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '../../../lib/auth/adminSession';
 
 const ALLOWED_ORIGINS = [
   'res.cloudinary.com',
@@ -13,6 +14,10 @@ const ALLOWED_ORIGINS = [
 ];
 
 export async function GET(request) {
+  // Admin-only: previously an open proxy for any res.cloudinary.com URL
+  const auth = await requireAdmin(request);
+  if (auth.response) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const imageUrl = searchParams.get('url');
 
@@ -48,8 +53,8 @@ export async function GET(request) {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=86400',
-        'Access-Control-Allow-Origin': '*',
+        // Admin-only content: never store in shared caches
+        'Cache-Control': 'private, max-age=3600',
       },
     });
   } catch (err) {

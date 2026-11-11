@@ -16,6 +16,14 @@ export default function ImageUpload({
   hint,
   icon = "📸",
   required = false,
+  // Optional overrides (defaults preserve the original player-photo behaviour)
+  allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"],
+  allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"],
+  typeErrorMessage = "Only JPG, PNG, and WebP images are allowed.",
+  maxSizeBytes = 3 * 1024 * 1024,
+  requireTypeAndExtension = false,
+  uploadState = null, // { status: "uploading" | "done" | "error", progress: 0-100 }
+  showActions = false, // always-visible Replace / Remove buttons (touch friendly)
 }) {
   const inputRef = useRef(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -24,19 +32,19 @@ export default function ImageUpload({
     if (!file) return;
 
     // Validate file type
-    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
     const fileExt = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
-    const validExts = [".jpg", ".jpeg", ".png", ".webp"];
+    const typeOk = allowedTypes.includes(file.type);
+    const extOk = allowedExtensions.includes(fileExt);
 
-    if (!validTypes.includes(file.type) && !validExts.includes(fileExt)) {
-      onImageSelect(null, "Only JPG, PNG, and WebP images are allowed.");
+    if (requireTypeAndExtension ? !(typeOk && extOk) : !typeOk && !extOk) {
+      onImageSelect(null, typeErrorMessage);
       return;
     }
 
-    // Validate file size (max 3MB)
-    const MAX_SIZE = 3 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      onImageSelect(null, "Image size must be under 3 MB.");
+    // Validate file size
+    if (file.size > maxSizeBytes) {
+      const mb = Math.round((maxSizeBytes / (1024 * 1024)) * 10) / 10;
+      onImageSelect(null, `Image size must be under ${mb} MB.`);
       return;
     }
 
@@ -164,13 +172,46 @@ export default function ImageUpload({
             <div
               className="absolute top-2 right-2 px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 font-semibold"
               style={{
-                background: "rgba(34,197,94,0.9)",
+                background:
+                  uploadState?.status === "uploading"
+                    ? "rgba(245,158,11,0.9)"
+                    : uploadState?.status === "error"
+                      ? "rgba(239,68,68,0.9)"
+                      : "rgba(34,197,94,0.9)",
                 color: "#fff",
                 fontFamily: "var(--font-accent)",
               }}
             >
-              <span>✓</span> Ready
+              {uploadState?.status === "uploading" ? (
+                <>Uploading {uploadState.progress || 0}%</>
+              ) : uploadState?.status === "error" ? (
+                <>⚠ Upload failed</>
+              ) : uploadState?.status === "done" ? (
+                <>
+                  <span>✓</span> Uploaded
+                </>
+              ) : (
+                <>
+                  <span>✓</span> Ready
+                </>
+              )}
             </div>
+
+            {/* Upload progress bar */}
+            {uploadState?.status === "uploading" && (
+              <div
+                className="absolute bottom-0 left-0 right-0 h-1.5"
+                style={{ background: "rgba(0,0,0,0.4)" }}
+              >
+                <div
+                  className="h-full transition-all duration-200"
+                  style={{
+                    width: `${uploadState.progress || 0}%`,
+                    background: "linear-gradient(90deg, #16a34a, #22c55e)",
+                  }}
+                />
+              </div>
+            )}
           </div>
         ) : (
           /* Upload Placeholder */
@@ -202,6 +243,38 @@ export default function ImageUpload({
           </div>
         )}
       </div>
+
+      {/* Always-visible actions (mobile friendly) */}
+      {showActions && previewUrl && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploadState?.status === "uploading"}
+            className="flex-1 px-3 py-2 rounded-xl text-xs font-semibold tracking-wider"
+            style={{
+              background: "rgba(34,197,94,0.12)",
+              border: "1px solid rgba(34,197,94,0.35)",
+              color: "#4ade80",
+              opacity: uploadState?.status === "uploading" ? 0.6 : 1,
+            }}
+          >
+            🔄 Replace
+          </button>
+          <button
+            type="button"
+            onClick={handleRemove}
+            className="flex-1 px-3 py-2 rounded-xl text-xs font-semibold tracking-wider"
+            style={{
+              background: "rgba(239,68,68,0.1)",
+              border: "1px solid rgba(239,68,68,0.35)",
+              color: "#f87171",
+            }}
+          >
+            🗑️ Remove
+          </button>
+        </div>
+      )}
 
       {/* Hidden file input */}
       <input

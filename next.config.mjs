@@ -12,6 +12,8 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '10mb',
     },
+    // Enables instrumentation.js (startup environment validation)
+    instrumentationHook: true,
   },
 };
 

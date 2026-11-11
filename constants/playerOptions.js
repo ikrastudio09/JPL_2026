@@ -107,3 +107,10 @@ export const ALLOWED_IMAGE_TYPES = [
   "image/png",
   "image/webp",
 ];
+
+// Aadhaar card document uploads (front & back) — JPG/JPEG/PNG only.
+// 4 MB keeps each independent upload request safely under Vercel's 4.5 MB body limit.
+export const AADHAAR_MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024; // 4 MB
+export const AADHAAR_ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png"];
+export const AADHAAR_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png"];
+export const AADHAAR_SIDES = ["front", "back"];

@@ -1,13 +1,19 @@
 /**
  * PATCH /api/players/[id]/status
  * Update a player's registration status (pending | approved | rejected)
+ * (Admin only — status update logic unchanged)
  */
 import connectDB from "../../../../../lib/mongodb";
 import Player from "../../../../../models/Player";
-import { successResponse, errorResponse, calculateAge } from "../../../../../utils/apiHelpers";
+import { successResponse, errorResponse } from "../../../../../utils/apiHelpers";
+import { requireAdmin } from "../../../../../lib/auth/adminSession";
+import { ADMIN_PLAYER_FIELDS, toAdminPlayer } from "../../../../../lib/playerProjection";
 
 export async function PATCH(request, { params }) {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.response) return auth.response;
+
     await connectDB();
 
     const { id } = await params;
@@ -28,24 +34,14 @@ export async function PATCH(request, { params }) {
       { status },
       { new: true, runValidators: true },
     )
-      .select(
-        "playerID playerName playerPhone dateOfBirth bloodGroup " +
-          "fatherName profession professionOther previousTeam playerAddress " +
-          "previousPoints previousPerformance " +
-          "playerPhoto.url playingStyle playerType playerPool playerCategory " +
-          "tShirtSize pantSize tShirtNumber tShirtName " +
-          "paymentScreenshot.url transactionId status Age createdAt updatedAt",
-      )
+      .select(ADMIN_PLAYER_FIELDS)
       .lean();
 
     if (!playerRaw) {
       return errorResponse("Player not found.", 404);
     }
 
-    const player = {
-      ...playerRaw,
-      calculatedAge: calculateAge(playerRaw.dateOfBirth, playerRaw.Age),
-    };
+    const player = toAdminPlayer(playerRaw);
 
     return successResponse({ player }, "Player status updated successfully.");
   } catch (error) {

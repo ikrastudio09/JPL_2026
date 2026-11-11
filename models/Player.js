@@ -58,6 +58,41 @@ const previousPerformanceSchema = new mongoose.Schema(
   { _id: false },
 );
 
+// Private (Cloudinary "authenticated") document reference.
+// No public URL is stored; admins view the image only via the authenticated proxy route.
+const PrivateDocumentSchema = new mongoose.Schema(
+  {
+    public_id: { type: String, required: true },
+    format: { type: String },
+    bytes: { type: Number },
+    delivery_type: { type: String, default: "authenticated" },
+    uploadedAt: { type: Date },
+  },
+  { _id: false },
+);
+
+// Razorpay payment metadata (only present on registrations paid through Razorpay)
+const PaymentSchema = new mongoose.Schema(
+  {
+    provider: { type: String, enum: ["razorpay"], required: true },
+    razorpayOrderId: { type: String, required: true },
+    razorpayPaymentId: { type: String, required: true },
+    receipt: { type: String },
+    amount: { type: Number, required: true }, // in paise
+    currency: { type: String, default: "INR" },
+    status: { type: String }, // Razorpay payment status, e.g. "captured"
+    method: { type: String }, // upi | card | netbanking | wallet | ...
+    paidAt: { type: Date },
+    verifiedVia: { type: String, enum: ["checkout", "webhook", "reconciliation"] },
+  },
+  { _id: false },
+);
+
+// Legacy (QR/UPI) registrations always have a payment screenshot; Razorpay ones do not.
+function requiresPaymentScreenshot() {
+  return !(this.payment && this.payment.provider === "razorpay");
+}
+
 const PlayerSchema = new mongoose.Schema(
   {
     playerID: {
@@ -231,17 +266,24 @@ const PlayerSchema = new mongoose.Schema(
       default: "Undefined",
     },
 
-    // Payment screenshot stored in Cloudinary
+    // Payment screenshot stored in Cloudinary (legacy QR/UPI workflow; historical records)
     paymentScreenshot: {
       url: {
         type: String,
-        required: [true, "Payment screenshot is required"],
+        required: [requiresPaymentScreenshot, "Payment screenshot is required"],
       },
       public_id: {
         type: String,
-        required: [true, "Payment screenshot public ID is required"],
+        required: [requiresPaymentScreenshot, "Payment screenshot public ID is required"],
       },
     },
+
+    // Aadhaar card images (new registrations). Excluded from every query by default.
+    aadhaarFrontImage: { type: PrivateDocumentSchema, select: false },
+    aadhaarBackImage: { type: PrivateDocumentSchema, select: false },
+
+    // Razorpay payment details (new registrations)
+    payment: { type: PaymentSchema },
 
     // Unique transaction ID from payment
     transactionId: {
@@ -283,6 +325,24 @@ PlayerSchema.index({ status: 1 });
 PlayerSchema.index({ createdAt: -1 });
 PlayerSchema.index({ profession: 1 });
 PlayerSchema.index({ tShirtNumber: 1 });
+
+// Admin list sorts by { createdAt: -1, _id: -1 } (the _id tie-breaker keeps pagination stable
+// when records share a timestamp, e.g. bulk imports). Without this index that sort becomes a
+// collection scan + in-memory sort (verified with explain("executionStats"), see tests/perf.mjs).
+// Filter-specific compound indexes were measured and NOT added: gains were ~1 ms at 5,000 players.
+// (The older { createdAt: -1 } index is now a prefix of this one and could be dropped later.)
+PlayerSchema.index({ createdAt: -1, _id: -1 });
+
+// Razorpay idempotency guards: one registration per order and per payment.
+// Partial indexes so historical documents without payment data are unaffected.
+PlayerSchema.index(
+  { "payment.razorpayOrderId": 1 },
+  { unique: true, partialFilterExpression: { "payment.razorpayOrderId": { $type: "string" } } },
+);
+PlayerSchema.index(
+  { "payment.razorpayPaymentId": 1 },
+  { unique: true, partialFilterExpression: { "payment.razorpayPaymentId": { $type: "string" } } },
+);
 
 // Prevent model overwrite in development (hot reload)
 const Player = mongoose.models.Player || mongoose.model("Player", PlayerSchema);

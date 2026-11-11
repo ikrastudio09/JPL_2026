@@ -1,7 +1,7 @@
 /**
  * GET /api/players/[id]
  * PATCH /api/players/[id]
- * Fetch individual player details and update player information (Admin)
+ * Fetch individual player details and update player information (Admin only)
  */
 import connectDB from "../../../../lib/mongodb";
 import Player from "../../../../models/Player";
@@ -24,33 +24,28 @@ import {
   TSHIRT_NUMBER_MAX,
   TSHIRT_NAME_MAX_LENGTH,
 } from "../../../../constants/playerOptions";
+import { requireAdmin } from "../../../../lib/auth/adminSession";
+import { ADMIN_PLAYER_FIELDS, toAdminPlayer } from "../../../../lib/playerProjection";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request, { params }) {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.response) return auth.response;
+
     await connectDB();
     const { id } = await params;
 
     const playerRaw = await Player.findById(id)
-      .select(
-        "playerID playerName playerPhone dateOfBirth bloodGroup " +
-          "fatherName profession professionOther previousTeam playerAddress " +
-          "previousPoints previousPerformance " +
-          "playerPhoto.url playingStyle playerType playerPool playerCategory " +
-          "tShirtSize pantSize tShirtNumber tShirtName " +
-          "paymentScreenshot.url transactionId status Age createdAt updatedAt",
-      )
+      .select(ADMIN_PLAYER_FIELDS)
       .lean();
 
     if (!playerRaw) {
       return errorResponse("Player not found.", 404);
     }
 
-    const player = {
-      ...playerRaw,
-      calculatedAge: calculateAge(playerRaw.dateOfBirth, playerRaw.Age),
-    };
+    const player = toAdminPlayer(playerRaw);
 
     return successResponse({ player });
   } catch (error) {
@@ -61,6 +56,9 @@ export async function GET(request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.response) return auth.response;
+
     await connectDB();
     const { id } = await params;
     const body = await request.json();
@@ -323,20 +321,10 @@ export async function PATCH(request, { params }) {
       { $set: updateFields },
       { new: true, runValidators: true },
     )
-      .select(
-        "playerID playerName playerPhone dateOfBirth anniversary bloodGroup " +
-          "fatherName profession professionOther previousTeam playerAddress " +
-          "previousPoints previousPerformance " +
-          "playerPhoto.url playingStyle playerType playerPool playerCategory " +
-          "tShirtSize pantSize tShirtNumber tShirtName " +
-          "paymentScreenshot.url transactionId status Age createdAt updatedAt",
-      )
+      .select(`${ADMIN_PLAYER_FIELDS} anniversary`)
       .lean();
 
-    const player = {
-      ...updatedPlayerRaw,
-      calculatedAge: calculateAge(updatedPlayerRaw.dateOfBirth, updatedPlayerRaw.Age),
-    };
+    const player = toAdminPlayer(updatedPlayerRaw);
 
     return successResponse({ player }, "Player details updated successfully.");
   } catch (error) {

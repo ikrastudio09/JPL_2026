@@ -6,11 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "hash-password": "node scripts/hash-admin-password.mjs",
+    "test": "node tests/run-all.mjs"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
     "axios": "^1.7.2",
+    "bcryptjs": "^3.0.3",
     "cloudinary": "^2.4.0",
     "form-data": "^4.0.0",
     "jspdf": "^4.2.1",
@@ -18,6 +21,7 @@
     "mongoose": "^8.5.1",
     "multer": "^1.4.5-lts.1",
     "next": "14.2.5",
+    "razorpay": "^2.9.8",
     "react": "^18",
     "react-dom": "^18",
     "react-hot-toast": "^2.4.1",
@@ -31,8 +35,10 @@
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.5",
+    "mongodb-memory-server": "^10.4.3",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

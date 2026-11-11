@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
+// xlsx (~400 kB) is loaded on demand when exporting, not on dashboard load
 import {
   BLOOD_GROUPS,
   PROFESSIONS,
@@ -14,6 +14,7 @@ import {
   TSHIRT_NAME_MAX_LENGTH,
 } from "../../constants/playerOptions";
 import { calculateAge } from "../../utils/apiHelpers";
+import { adminFetch } from "../../lib/adminFetch";
 
 /* ─── styling constants ─────────────────────────────────────── */
 const STATUS_COLORS = {
@@ -46,6 +47,13 @@ function Badge({ status }) {
   );
 }
 
+// Request a small Cloudinary rendition for avatars instead of the full image
+function cloudinaryThumb(url, px) {
+  if (typeof url !== "string" || !url.includes("res.cloudinary.com") || !url.includes("/upload/")) return url;
+  const size = Math.round(px * 2); // 2x for high-DPI screens
+  return url.replace("/upload/", `/upload/c_fill,g_face,w_${size},h_${size},q_auto,f_auto/`);
+}
+
 function Avatar({ src, name, size = 40 }) {
   const [err, setErr] = useState(false);
   if (!src || err) {
@@ -72,8 +80,9 @@ function Avatar({ src, name, size = 40 }) {
   return (
     /* eslint-disable-next-line @next/next/no-img-element */
     <img
-      src={src}
+      src={cloudinaryThumb(src, size)}
       alt={name || "Player"}
+      loading="lazy"
       onError={() => setErr(true)}
       style={{
         width: size,
@@ -288,14 +297,31 @@ export default function PlayersAdminPage() {
     approved: 0,
     rejected: 0,
   });
-  const debounceRef = useRef(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const listAbortRef = useRef(null);
+
+  /* ── stats: single server-side aggregation (no full-collection download) ── */
+  const fetchStats = useCallback(async () => {
+    try {
+      const r = await adminFetch("/api/players/stats");
+      const data = await r.json();
+      if (data.success) setStats(data.data.stats);
+    } catch {
+      /* stats are non-critical */
+    }
+  }, []);
 
   /* ── fetch ── */
   const fetchPlayers = useCallback(
     async (overrides = {}) => {
+      // Cancel any in-flight list request so stale results never overwrite newer ones
+      listAbortRef.current?.abort();
+      const controller = new AbortController();
+      listAbortRef.current = controller;
+
       setLoading(true);
       const targetPage = overrides.page ?? page;
-      const targetSearch = overrides.search !== undefined ? overrides.search : search;
+      const targetSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
       const targetStatus = overrides.filterStatus !== undefined ? overrides.filterStatus : filterStatus;
       const targetType = overrides.filterType !== undefined ? overrides.filterType : filterType;
       const targetPool = overrides.filterPool !== undefined ? overrides.filterPool : filterPool;
@@ -312,50 +338,42 @@ export default function PlayersAdminPage() {
       });
 
       try {
-        const r = await fetch(`/api/players?${params.toString()}`);
+        const r = await adminFetch(`/api/players?${params.toString()}`, { signal: controller.signal });
         const data = await r.json();
+        if (controller.signal.aborted) return;
         if (data.success) {
           setPlayers(data.data.players);
           setPagination(data.data.pagination);
-
-          // Update summary stats from non-filtered total when on initial view
-          if (!targetStatus && !targetType && !targetPool && !targetProf && !targetSearch && targetPage === 1) {
-            const allR = await fetch(`/api/players?limit=10000`);
-            const allD = await allR.json();
-            if (allD.success) {
-              const all = allD.data.players;
-              setStats({
-                total: all.length,
-                pending: all.filter((p) => p.status === "pending").length,
-                approved: all.filter((p) => p.status === "approved").length,
-                rejected: all.filter((p) => p.status === "rejected").length,
-              });
-            }
-          }
         } else {
           showToast(data.message || "Failed to fetch players", "error");
         }
-      } catch {
+      } catch (e) {
+        if (e?.name === "AbortError") return;
         showToast("Network error while fetching players", "error");
       } finally {
-        setLoading(false);
+        if (listAbortRef.current === controller) setLoading(false);
       }
     },
-    [page, limit, search, filterStatus, filterType, filterPool, filterProfession],
+    [page, limit, debouncedSearch, filterStatus, filterType, filterPool, filterProfession],
   );
 
+  // One request per change of page / filters / (debounced) search
   useEffect(() => {
     fetchPlayers();
   }, [fetchPlayers]);
 
   useEffect(() => {
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  // Debounce search typing: the list is fetched once typing pauses
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
       setPage(1);
-      fetchPlayers({ page: 1, search });
     }, 350);
-    return () => clearTimeout(debounceRef.current);
-  }, [search, fetchPlayers]);
+    return () => clearTimeout(t);
+  }, [search]);
 
   /* ── toast ── */
   const showToast = (msg, type = "success") => {
@@ -366,7 +384,7 @@ export default function PlayersAdminPage() {
   /* ── status update ── */
   const updateStatus = async (playerId, newStatus) => {
     try {
-      const r = await fetch(`/api/players/${playerId}/status`, {
+      const r = await adminFetch(`/api/players/${playerId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
@@ -382,6 +400,7 @@ export default function PlayersAdminPage() {
           setSelected((prev) => ({ ...prev, status: newStatus }));
         }
         showToast(`Status updated to "${newStatus}"`);
+        fetchStats();
       } else {
         showToast(data.message || "Status update failed", "error");
       }
@@ -392,7 +411,7 @@ export default function PlayersAdminPage() {
 
   /* ── fetch ALL for export (no pagination) ── */
   const fetchAllForExport = async () => {
-    const r = await fetch(`/api/players?limit=10000`);
+    const r = await adminFetch(`/api/players?limit=10000`);
     const d = await r.json();
     return d.success ? d.data.players : players;
   };
@@ -450,6 +469,7 @@ export default function PlayersAdminPage() {
         };
       });
 
+      const XLSX = await import("xlsx");
       const ws = XLSX.utils.json_to_sheet(rows);
 
       /* Column widths */
@@ -665,7 +685,7 @@ export default function PlayersAdminPage() {
 
       setSaving(true);
       try {
-        const res = await fetch(`/api/players/${player._id}`, {
+        const res = await adminFetch(`/api/players/${player._id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1413,7 +1433,7 @@ export default function PlayersAdminPage() {
 
     const updatePool = async () => {
       try {
-        const r = await fetch(`/api/players/${player._id}/pool`, {
+        const r = await adminFetch(`/api/players/${player._id}/pool`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ playerPool }),
@@ -1617,6 +1637,30 @@ export default function PlayersAdminPage() {
                 <Section title="Payment Information">
                   <Field label="Transaction ID" value={player.transactionId} mono />
                   <Field label="Status" value={player.status?.toUpperCase()} />
+                  {player.payment?.provider === "razorpay" ? (
+                    <>
+                      <Field label="Payment Mode" value="Razorpay (online)" />
+                      <Field label="Razorpay Order ID" value={player.payment.razorpayOrderId} mono />
+                      <Field label="Razorpay Payment ID" value={player.payment.razorpayPaymentId} mono />
+                      <Field
+                        label="Amount Paid"
+                        value={
+                          typeof player.payment.amount === "number"
+                            ? `₹${(player.payment.amount / 100).toLocaleString("en-IN")} ${player.payment.currency || "INR"}`
+                            : "—"
+                        }
+                        highlight
+                      />
+                      <Field label="Payment Status" value={player.payment.status?.toUpperCase()} />
+                      <Field label="Payment Method" value={player.payment.method ? player.payment.method.toUpperCase() : "Not Available"} />
+                      <Field
+                        label="Paid On"
+                        value={player.payment.paidAt ? new Date(player.payment.paidAt).toLocaleString("en-IN") : "—"}
+                      />
+                    </>
+                  ) : (
+                    <Field label="Payment Mode" value="UPI QR (manual screenshot)" />
+                  )}
                   <Field
                     label="Registered On"
                     value={
@@ -1681,9 +1725,27 @@ export default function PlayersAdminPage() {
                       <span style={styles.zoomHint}>🔍 Click to enlarge</span>
                     </div>
                   ) : (
-                    <div style={styles.imgPlaceholder}>No screenshot uploaded</div>
+                    <div style={styles.imgPlaceholder}>
+                      {player.payment?.provider === "razorpay"
+                        ? "Paid online via Razorpay — no screenshot required"
+                        : "No screenshot uploaded"}
+                    </div>
                   )}
                 </div>
+
+                {/* Aadhaar documents (admin-only, served through the authenticated proxy) */}
+                <AadhaarImage
+                  label="Aadhaar Card — Front"
+                  available={player.hasAadhaarFront}
+                  src={`/api/players/${player._id}/aadhaar/front`}
+                  onOpen={setLightboxImg}
+                />
+                <AadhaarImage
+                  label="Aadhaar Card — Back"
+                  available={player.hasAadhaarBack}
+                  src={`/api/players/${player._id}/aadhaar/back`}
+                  onOpen={setLightboxImg}
+                />
               </div>
             </div>
 
@@ -2317,6 +2379,53 @@ export default function PlayersAdminPage() {
 }
 
 /* ─── Sub-Components ────────────────────────────────────────── */
+function AadhaarImage({ label, available, src, onOpen }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div>
+      <div style={styles.imgLabel}>{label}</div>
+      {available && !failed ? (
+        <div style={{ position: "relative" }}>
+          <div style={{ cursor: "zoom-in", position: "relative" }} onClick={() => onOpen(src)}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt={label}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setFailed(true)}
+              style={{
+                width: "100%",
+                maxHeight: 220,
+                objectFit: "contain",
+                borderRadius: 12,
+                border: "1px solid #E2E8F0",
+                background: "#F8FAFC",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+              }}
+            />
+            <span style={styles.zoomHint}>🔍 Click to enlarge</span>
+          </div>
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: "inline-block", marginTop: 6, fontSize: 12, color: "#1E40AF", fontWeight: 600 }}
+          >
+            Open in new tab ↗
+          </a>
+        </div>
+      ) : (
+        <div style={styles.imgPlaceholder}>
+          {available && failed
+            ? "Could not load document — try again"
+            : "Not provided (registered before Aadhaar upload was required)"}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <div style={{ marginBottom: 16 }}>

@@ -157,7 +157,7 @@ export default function SuccessModal({ player, onClose }) {
               <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/5">
                 <DetailRow
                   label="Transaction ID"
-                  value={player.transactionId}
+                  value={player.paymentId || player.transactionId}
                   highlight
                 />
                 <DetailRow
