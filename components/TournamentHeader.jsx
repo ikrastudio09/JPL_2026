@@ -24,7 +24,7 @@ export default function TournamentHeader({ registrationFee = 1500 }) {
             textTransform: "uppercase",
           }}
         >
-          <span>🏆</span> Season 2026
+          <span>🏆</span> Season 5
         </div>
 
         <div
