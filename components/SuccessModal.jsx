@@ -139,11 +139,6 @@ export default function SuccessModal({ player, onClose }) {
                     >
                       {player.name}
                     </p>
-                    {player.playerID && (
-                      <span className="text-xs px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 font-mono font-bold">
-                        #{player.playerID}
-                      </span>
-                    )}
                   </div>
                   <p
                     className="text-xs"
